@@ -1,26 +1,45 @@
-Here's your context summary:
+Here's your portable context:
 
 ---
 
-**Setup:** Running LLM inference on Clore.AI (GPU cloud marketplace) using Docker container `ghcr.io/ggml-org/llama.cpp:server-cuda` on rented RTX 3090/4090 GPUs (24GB VRAM).
+**Project: Self-hosted LLM inference on Clore.AI GPU marketplace**
 
-**How Clore works:** SSH Autoinstall replaces container entrypoint with S6 overlay that runs SSH + `/root/onstart.sh`. A "startup script" runs once on first boot — used to download models and write `onstart.sh`. After writing `onstart.sh`, call `s6-svc -r /var/run/s6/services/onstart` to trigger it.
+## Platform: Clore.AI
 
-**Current model:** Qwen3.6-35B-A3B (MoE, 35B total params, 3B active per token). Using Unsloth GGUF quant `UD-Q4_K_XL` (22.1GB).
+Clore.AI is a P2P GPU rental marketplace. You rent Docker containers on other people's GPUs. You don't control the host OS — only what runs inside the container.
 
-**Current llama-server flags:**
-```
--ngl 999 -fa on -c 65536 --cache-type-k q8_0 --cache-type-v q8_0 --no-mmap --jinja
-```
+**How Clore's boot process works:**
+- You specify a Docker image and a "startup script" when creating an order
+- Clore's SSH Autoinstall replaces the container entrypoint with S6 overlay (a process supervisor) that runs SSH + `/root/onstart.sh`
+- **Startup script** = runs ONCE on first container creation. Used for installing software and downloading models
+- **`/root/onstart.sh`** = runs EVERY time the container starts/restarts. This is where the llama-server command lives
+- After writing onstart.sh, call `s6-svc -r /var/run/s6/services/onstart` to trigger it. If S6 is ready it runs immediately; if not, S6 runs it when it finishes deploying
 
-**Key learnings:**
-- Clore startup scripts have minimal PATH — `apt install` works but binaries aren't found after. Solution: building custom Docker image with tools pre-installed.
-- `-fa` requires `-fa on` (not just `-fa`) on newer llama.cpp builds.
-- q8_0 KV cache quantization halves KV VRAM with no quality loss on Qwen3.6.
-- Speculative decoding is net-negative on 3090 with this MoE model.
-- 65K context is safe limit for Q4_K_XL on 24GB; may push to 80K with headroom.
+**Clore gotchas we discovered the hard way:**
+- The startup script runs in a minimal shell with a stripped PATH. Tools installed via `apt install` during the script often can't be found by name immediately — the shell doesn't see them. This is why we moved to building a custom Docker image with tools pre-baked
+- `huggingface-cli` is deprecated; the new command is `hf`
+- `hf download --local-dir` doesn't reliably place files where expected on these containers
+- Model downloads can produce 0-byte files silently — always verify filesize before proceeding
+- SSH can take several minutes to become available even after Clore says "deployed"
+- Images that force a non-root default user don't work with SSH Autoinstall
 
-**Custom Dockerfile being built:**
+## Hardware
+
+Currently renting single RTX 3090 or 4090 (24GB VRAM). Planning to move to 2x RTX 3090 (48GB total) for 262K context. On Clore spot pricing, RTX 3090 runs $0.03-0.12/hr, on-demand ~$0.20/hr per GPU.
+
+## Model: Qwen3.6-35B-A3B
+
+Mixture-of-Experts. 35B total parameters, only 3B active per token (256 experts, 8 activated + 1 shared). Practically this means:
+- VRAM: needs space for all 35B params (like any 35B model)
+- Compute per token: like a 3B model, so very fast (~100-135 tok/s on single 3090)
+- Using Unsloth `UD-Q4_K_XL` GGUF quantization — 22.1GB on disk
+
+## Docker image
+
+Base image: `ghcr.io/ggml-org/llama.cpp:server-cuda`
+
+Custom Dockerfile to pre-bake dependencies (avoids PATH issues in startup script):
+
 ```dockerfile
 FROM ghcr.io/ggml-org/llama.cpp:server-cuda
 RUN apt update -y && DEBIAN_FRONTEND=noninteractive apt install -y wget curl aria2 python3 python3-pip && pip install huggingface_hub[hf_transfer] --break-system-packages && rm -rf /var/lib/apt/lists/*
@@ -28,6 +47,117 @@ ENV HF_HUB_ENABLE_HF_TRANSFER=1
 RUN mkdir -p /models
 ```
 
-**Startup script:** Downloads model with 4-tier fallback (hf_transfer → aria2c → wget → curl), verifies filesize, writes `onstart.sh` with llama-server command, restarts S6 service. Logs to `/var/log/startup.log` and `/var/log/llama-server.log`.
+Push to Docker Hub, use as the Clore container image.
+
+## Working startup script (final version)
+
+```bash
+#!/bin/sh
+mkdir -p /models
+MODEL="/models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+URL="https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+export HF_TOKEN="hf_your_token_here"
+
+if [ ! -f "$MODEL" ]; then
+    echo "[$(date)] Starting model download..." >> /var/log/startup.log
+
+    echo "[$(date)] Trying aria2c..." >> /var/log/startup.log
+    aria2c -x 16 -s 16 -k 1M -d /models -o Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
+        --header="Authorization: Bearer $HF_TOKEN" \
+        "$URL" >> /var/log/startup.log 2>&1
+
+    if [ ! -f "$MODEL" ]; then
+        echo "[$(date)] aria2c failed, trying wget..." >> /var/log/startup.log
+        wget --header="Authorization: Bearer $HF_TOKEN" \
+            -O "$MODEL" "$URL" >> /var/log/startup.log 2>&1
+    fi
+
+    if [ ! -f "$MODEL" ]; then
+        echo "[$(date)] wget failed, trying curl..." >> /var/log/startup.log
+        curl -L -H "Authorization: Bearer $HF_TOKEN" \
+            -o "$MODEL" "$URL" >> /var/log/startup.log 2>&1
+    fi
+fi
+
+FILESIZE=$(stat -c%s "$MODEL" 2>/dev/null || echo 0)
+if [ "$FILESIZE" -lt 1000000000 ]; then
+    echo "[$(date)] ERROR: All download methods failed ($FILESIZE bytes)" >> /var/log/startup.log
+    rm -f "$MODEL"
+    exit 1
+fi
+
+echo "[$(date)] Download complete ($FILESIZE bytes)" >> /var/log/startup.log
+
+cat > /root/onstart.sh << 'EOF'
+#!/bin/sh
+export LD_LIBRARY_PATH=/app:$LD_LIBRARY_PATH
+/app/llama-server \
+  -m /models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
+  --host 0.0.0.0 \
+  --port 8080 \
+  -ngl 999 \
+  -fa on \
+  -c 98304 \
+  --cache-type-k q8_0 \
+  --cache-type-v q8_0 \
+  --no-mmap \
+  --jinja >> /var/log/llama-server.log 2>&1
+EOF
+
+chmod +x /root/onstart.sh
+s6-svc -r /var/run/s6/services/onstart
+```
+
+## llama-server flags and why each matters
+
+- **`-ngl 999`** — offload all layers to GPU
+- **`-fa on`** — flash attention. Must be `-fa on` not just `-fa` on newer llama.cpp builds (we hit this error)
+- **`-c 98304`** — 96K context. Proven working on single 3090 with Q4_K_XL + q8_0 KV cache. Uses 23.1GB of 24.5GB VRAM with 1.4GB headroom
+- **`--cache-type-k q8_0 --cache-type-v q8_0`** — the key optimization. Halves KV cache VRAM with no measurable quality loss on Qwen3.6. This is how we went from 8K to 98K context on the same GPU
+- **`--no-mmap`** — loads weights fully into VRAM instead of memory-mapping from disk. Better for GPU-only inference
+- **`--jinja`** — enables Jinja chat templates, required for Qwen3.6's chat format
+
+## What we confirmed works
+
+- Q4_K_XL at 98K context on single 3090: stable, 1.4GB headroom, server reports healthy
+- q8_0 KV cache quantization: no quality loss, halves KV cache footprint
+- aria2c with 16 parallel connections: ~52 MB/s download speed on Clore nodes
+- Three-tier download fallback (aria2c → wget → curl): handles whatever tools are available
+- HuggingFace token passed via Authorization header to all download methods
+
+## What we confirmed does NOT work or help
+
+- **Speculative decoding on this model:** extensively benchmarked, every configuration (ngram-cache, ngram-mod, classic draft with Qwen3.5-0.8B) is 3-12% slower on 3090. The MoE architecture causes expert thrashing during draft verification
+- **Ollama:** wraps llama.cpp but hides KV cache quantization, flash attention, and batch size controls. llama-server directly gives ~1.4x speed and 2x context
+- **`hf download`/`huggingface-cli`:** unreliable on Clore containers. Downloads to cache instead of target dir, or doesn't find the binary
+- **`-fa` without `on`:** newer llama.cpp builds require `-fa on`, bare `-fa` throws an error
+- **Tensor split mode (`-sm tensor`) for multi-GPU:** not implemented for MoE architectures including Qwen3.6
+
+## Next step: 262K context on 2x RTX 3090
+
+The plan is to rent a 2x RTX 3090 server on Clore (roughly $0.40/hr on-demand, much less on spot). 48GB total VRAM fits Q4_K_XL (22.1GB) with ~26GB for KV cache, enough for full 262K context.
+
+llama.cpp auto-detects both GPUs and splits layers across them using pipeline parallelism (layer split). No extra flags needed — same startup script but with `-c 262144` instead of `-c 98304`.
+
+Speed won't double with two GPUs because pipeline parallelism is sequential (tokens pass GPU0 → GPU1). Expect ~80-100 tok/s. The second GPU is purely for VRAM capacity, not speed.
+
+Alternative: could run Q8 quantization (38.5GB) across 2x 3090 for better quality at 262K context.
+
+## Useful debug commands
+
+```bash
+nvidia-smi                                    # VRAM usage
+cat /var/log/startup.log                      # download/setup log
+cat /var/log/llama-server.log | head -30      # server startup log
+curl http://localhost:8080/health              # health check
+s6-svstat /var/run/s6/services/onstart        # S6 service status
+pkill llama-server                            # kill server to restart with new config
+s6-svc -r /var/run/s6/services/onstart        # restart onstart service
+```
+
+## Log locations
+
+- `/var/log/startup.log` — model download and setup
+- `/var/log/llama-server.log` — llama-server output including VRAM breakdown
 
 ---
