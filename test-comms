@@ -1,0 +1,11 @@
+curl -X POST http://https://vwfx5pe9sw4be.us.clorecloud.net/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "mistral",
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "max_tokens": 50
+  }'
+
+cat /var/log/llama-server.log 2>/dev/null || echo "no log"
+cat /var/log/startup.log 2>/dev/null || echo "no log"
+
