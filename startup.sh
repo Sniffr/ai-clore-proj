@@ -32,7 +32,10 @@ export LD_LIBRARY_PATH=/app:$LD_LIBRARY_PATH
   --port 8080 \
   -ngl 999 \
   -fa on \
-  -c 8192 \
+  -c 65536 \
+  --cache-type-k q8_0 \
+  --cache-type-v q8_0 \
+  --no-mmap \
   --jinja >> /var/log/llama-server.log 2>&1
 EOF
 
