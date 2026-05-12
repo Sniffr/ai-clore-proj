@@ -40,8 +40,8 @@ jobs:
         with:
           context: .
           push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/llama-qwen36:latest
-            ghcr.io/${{ github.repository_owner }}/llama-qwen36:q4kxl
+          tags: |          
+            ghcr.io/${{ github.repository_owner_lowercase }}/llama-qwen36:latest
+            ghcr.io/${{ github.repository_owner_lowercase }}/llama-qwen36:q4kxl
           # No layer caching — the model layer is 22GB, caching it would
           # exceed GitHub Actions cache limits and slow things down
