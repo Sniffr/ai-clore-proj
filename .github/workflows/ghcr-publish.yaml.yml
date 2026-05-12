@@ -6,6 +6,9 @@ on:
       - main
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -14,6 +17,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set lowercase owner
+        run: echo "OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       - name: Free up disk space
         run: |
@@ -41,7 +47,7 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/llama-qwen36:latest
-            ghcr.io/${{ github.repository_owner }}/llama-qwen36:q4kxl
+            ghcr.io/${{ env.OWNER }}/llama-qwen36:latest
+            ghcr.io/${{ env.OWNER }}/llama-qwen36:q4kxl
           # No layer caching — the model layer is 22GB, caching it would
           # exceed GitHub Actions cache limits and slow things down
