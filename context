@@ -1,0 +1,33 @@
+Here's your context summary:
+
+---
+
+**Setup:** Running LLM inference on Clore.AI (GPU cloud marketplace) using Docker container `ghcr.io/ggml-org/llama.cpp:server-cuda` on rented RTX 3090/4090 GPUs (24GB VRAM).
+
+**How Clore works:** SSH Autoinstall replaces container entrypoint with S6 overlay that runs SSH + `/root/onstart.sh`. A "startup script" runs once on first boot — used to download models and write `onstart.sh`. After writing `onstart.sh`, call `s6-svc -r /var/run/s6/services/onstart` to trigger it.
+
+**Current model:** Qwen3.6-35B-A3B (MoE, 35B total params, 3B active per token). Using Unsloth GGUF quant `UD-Q4_K_XL` (22.1GB).
+
+**Current llama-server flags:**
+```
+-ngl 999 -fa on -c 65536 --cache-type-k q8_0 --cache-type-v q8_0 --no-mmap --jinja
+```
+
+**Key learnings:**
+- Clore startup scripts have minimal PATH — `apt install` works but binaries aren't found after. Solution: building custom Docker image with tools pre-installed.
+- `-fa` requires `-fa on` (not just `-fa`) on newer llama.cpp builds.
+- q8_0 KV cache quantization halves KV VRAM with no quality loss on Qwen3.6.
+- Speculative decoding is net-negative on 3090 with this MoE model.
+- 65K context is safe limit for Q4_K_XL on 24GB; may push to 80K with headroom.
+
+**Custom Dockerfile being built:**
+```dockerfile
+FROM ghcr.io/ggml-org/llama.cpp:server-cuda
+RUN apt update -y && DEBIAN_FRONTEND=noninteractive apt install -y wget curl aria2 python3 python3-pip && pip install huggingface_hub[hf_transfer] --break-system-packages && rm -rf /var/lib/apt/lists/*
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
+RUN mkdir -p /models
+```
+
+**Startup script:** Downloads model with 4-tier fallback (hf_transfer → aria2c → wget → curl), verifies filesize, writes `onstart.sh` with llama-server command, restarts S6 service. Logs to `/var/log/startup.log` and `/var/log/llama-server.log`.
+
+---

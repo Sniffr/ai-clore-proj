@@ -6,5 +6,4 @@ RUN apt update -y && \
     rm -rf /var/lib/apt/lists/*
 
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
-
 RUN mkdir -p /models
