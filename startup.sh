@@ -47,7 +47,7 @@ export LD_LIBRARY_PATH=/app:$LD_LIBRARY_PATH
   --port 8080 \
   -ngl 999 \
   -fa on \
-  -c 65536 \
+  -c 110000 \
   --cache-type-k q8_0 \
   --cache-type-v q8_0 \
   --no-mmap \
