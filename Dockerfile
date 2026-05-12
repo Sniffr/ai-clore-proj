@@ -7,3 +7,8 @@ RUN apt update -y && \
 
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
 RUN mkdir -p /models
+
+# Pre-download model during build
+RUN aria2c -x 16 -s 16 -k 1M -d /models \
+    -o Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
+    "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
