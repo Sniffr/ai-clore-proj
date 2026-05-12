@@ -161,3 +161,8 @@ s6-svc -r /var/run/s6/services/onstart        # restart onstart service
 - `/var/log/llama-server.log` — llama-server output including VRAM breakdown
 
 ---
+
+
+
+
+
