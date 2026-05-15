@@ -2,11 +2,15 @@ FROM ghcr.io/ggml-org/llama.cpp:server-cuda
 
 RUN apt update -y && \
     DEBIAN_FRONTEND=noninteractive apt install -y wget curl aria2 python3 python3-pip && \
-    pip install huggingface_hub[hf_transfer] --break-system-packages && \
+    pip install huggingface_hub[hf_transfer] flask --break-system-packages && \
     rm -rf /var/lib/apt/lists/*
 
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
 RUN mkdir -p /models
+
+COPY model_manager.py /app/model_manager.py
+
+EXPOSE 5000
 
 # Pre-download model during build
 RUN aria2c -x 16 -s 16 -k 1M -d /models \

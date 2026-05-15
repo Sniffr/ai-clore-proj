@@ -27,11 +27,10 @@ RUN git clone --depth=1 https://github.com/ggml-org/llama.cpp /llama.cpp \
 
 ENV LD_LIBRARY_PATH=/app:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 
-RUN pip install huggingface_hub[hf_transfer] --break-system-packages
+RUN pip install huggingface_hub[hf_transfer] flask --break-system-packages
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
 RUN mkdir -p /models
 
-# Pre-download model during build
-RUN aria2c -x 16 -s 16 -k 1M -d /models \
-    -o Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
-    "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf"
+COPY model_manager.py /app/model_manager.py
+
+EXPOSE 5000dockerfile
