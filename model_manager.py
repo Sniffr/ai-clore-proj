@@ -5,7 +5,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, render_template_string
 
 app = Flask(__name__)
 
@@ -173,7 +173,432 @@ def _run_download(dl_id, repo_id, filename, token):
 
 # ── routes ───────────────────────────────────────────────────────────────────
 
+UI_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>LLM Manager</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:monospace;background:#111;color:#ccc;font-size:13px;line-height:1.5}
+#app{max-width:960px;margin:0 auto;padding:16px}
+header{display:flex;align-items:center;gap:12px;padding:10px 0 18px;border-bottom:1px solid #2a2a2a;margin-bottom:20px}
+header h1{font-size:15px;color:#fff;font-weight:normal;letter-spacing:1px}
+#health-dot{width:9px;height:9px;border-radius:50%;background:#444;flex-shrink:0}
+#health-dot.ok{background:#4caf50}
+#health-dot.err{background:#f44336}
+#refresh-ts{margin-left:auto;font-size:11px;color:#555}
+section{margin-bottom:28px}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#666;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #1e1e1e}
+.card{background:#181818;border:1px solid #252525;border-radius:4px;padding:14px}
+.row{display:flex;gap:24px;flex-wrap:wrap}
+.kv{display:flex;flex-direction:column;gap:2px}
+.kv span:first-child{font-size:11px;color:#555}
+.kv span:last-child{color:#e0e0e0}
+.vram-bar{height:6px;background:#222;border-radius:3px;margin-top:6px;overflow:hidden}
+.vram-bar-fill{height:100%;background:#1976d2;border-radius:3px;transition:width .4s}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:11px;color:#555;text-transform:uppercase;padding:6px 8px;border-bottom:1px solid #1e1e1e}
+td{padding:7px 8px;border-bottom:1px solid #1a1a1a;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#1a1a1a}
+.active-badge{color:#4caf50;font-size:11px}
+.tag{font-size:10px;padding:1px 5px;border-radius:2px;background:#1e1e1e;color:#888;border:1px solid #2a2a2a}
+btn,button,.btn{font-family:monospace;font-size:12px;padding:4px 10px;border:1px solid #333;border-radius:3px;background:#1e1e1e;color:#ccc;cursor:pointer;white-space:nowrap}
+button:hover,.btn:hover{background:#252525;border-color:#444}
+button.primary,.btn.primary{border-color:#1565c0;color:#90caf9;background:#0d1a2e}
+button.primary:hover{background:#112240}
+button.danger{border-color:#5c1a1a;color:#ef9a9a;background:#1a0d0d}
+button.danger:hover{background:#220f0f}
+button:disabled{opacity:.4;cursor:not-allowed}
+input,select{font-family:monospace;font-size:12px;padding:5px 8px;background:#151515;border:1px solid #2a2a2a;border-radius:3px;color:#ddd;width:100%}
+input:focus,select:focus{outline:none;border-color:#1565c0}
+.form-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+.form-group{display:flex;flex-direction:column;gap:4px}
+.form-group label{font-size:11px;color:#555}
+.form-group.grow{flex:1;min-width:140px}
+.msg{font-size:11px;padding:4px 8px;border-radius:3px;margin-top:6px}
+.msg.ok{color:#81c784;background:#0a1f0a;border:1px solid #1b3d1b}
+.msg.err{color:#e57373;background:#1f0a0a;border:1px solid #3d1b1b}
+.msg.info{color:#90caf9;background:#0a1020;border:1px solid #1b2d4a}
+.prog-bar{height:4px;background:#1e1e1e;border-radius:2px;overflow:hidden;margin-top:4px}
+.prog-bar-fill{height:100%;background:#1976d2;border-radius:2px;transition:width .3s}
+pre#log-out{background:#0d0d0d;border:1px solid #1e1e1e;border-radius:4px;padding:12px;font-size:11px;color:#8bc34a;overflow-x:auto;white-space:pre-wrap;word-break:break-all;max-height:340px;overflow-y:auto}
+.cfg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px}
+.sep{width:1px;background:#222;align-self:stretch;margin:0 4px}
+</style>
+</head>
+<body>
+<div id="app">
+
+<header>
+  <div id="health-dot"></div>
+  <h1>LLM MANAGER</h1>
+  <span id="refresh-ts"></span>
+</header>
+
+<!-- STATUS -->
+<section>
+  <h2>Status</h2>
+  <div class="card" id="status-card">Loading...</div>
+</section>
+
+<!-- MODELS -->
+<section>
+  <h2>Models on disk</h2>
+  <div id="models-msg"></div>
+  <table>
+    <thead><tr><th>Filename</th><th>Size</th><th>Active</th><th></th></tr></thead>
+    <tbody id="models-body"><tr><td colspan="4" style="color:#555">Loading...</td></tr></tbody>
+  </table>
+</section>
+
+<!-- SWITCH CONFIG -->
+<section id="switch-section" style="display:none">
+  <h2>Switch model — server config</h2>
+  <div class="card">
+    <div class="cfg-grid" id="switch-cfg-grid"></div>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+      <button class="primary" onclick="doSwitch()">Switch &amp; restart</button>
+      <button onclick="document.getElementById('switch-section').style.display='none'">Cancel</button>
+      <span id="switch-msg" class="msg" style="display:none"></span>
+    </div>
+  </div>
+</section>
+
+<!-- DOWNLOAD -->
+<section>
+  <h2>Download model</h2>
+  <div class="card">
+    <div class="form-row">
+      <div class="form-group grow">
+        <label>HuggingFace repo ID</label>
+        <input id="dl-repo" type="text" placeholder="unsloth/Qwen3.6-35B-A3B-GGUF">
+      </div>
+      <div class="form-group grow">
+        <label>Filename</label>
+        <input id="dl-file" type="text" placeholder="Qwen3.6-35B-A3B-UD-Q6_K_XL.gguf">
+      </div>
+      <div class="form-group" style="min-width:200px">
+        <label>HF Token (optional — overrides saved)</label>
+        <input id="dl-token" type="password" placeholder="hf_...">
+      </div>
+      <div class="form-group">
+        <label>&nbsp;</label>
+        <button class="primary" onclick="startDownload()">Download</button>
+      </div>
+    </div>
+    <div id="dl-msg" class="msg" style="display:none"></div>
+  </div>
+</section>
+
+<!-- ACTIVE DOWNLOADS -->
+<section>
+  <h2>Downloads</h2>
+  <div id="downloads-empty" style="color:#555;font-size:12px">No downloads yet.</div>
+  <table id="downloads-table" style="display:none">
+    <thead><tr><th>File</th><th>Repo</th><th>Progress</th><th>Status</th><th></th></tr></thead>
+    <tbody id="downloads-body"></tbody>
+  </table>
+</section>
+
+<!-- SERVER CONFIG -->
+<section>
+  <h2>Server config &amp; restart</h2>
+  <div class="card">
+    <div class="cfg-grid" id="cfg-grid"></div>
+    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+      <button class="primary" onclick="restartServer()">Apply &amp; restart</button>
+      <span id="cfg-msg" class="msg" style="display:none"></span>
+    </div>
+  </div>
+</section>
+
+<!-- TOKEN -->
+<section>
+  <h2>HuggingFace token</h2>
+  <div class="card">
+    <div class="form-row">
+      <div class="form-group grow">
+        <label id="token-label">Status: checking...</label>
+        <input id="token-input" type="password" placeholder="hf_...">
+      </div>
+      <div class="form-group">
+        <label>&nbsp;</label>
+        <button class="primary" onclick="saveToken()">Save token</button>
+      </div>
+      <div class="form-group">
+        <label>&nbsp;</label>
+        <button class="danger" onclick="deleteToken()">Remove</button>
+      </div>
+    </div>
+    <div id="token-msg" class="msg" style="display:none"></div>
+  </div>
+</section>
+
+<!-- LOGS -->
+<section>
+  <h2>Server log <span style="color:#555;font-size:11px">(last <select id="log-lines" onchange="fetchLogs()" style="width:60px;padding:2px 4px"><option>30</option><option>60</option><option selected>100</option><option>200</option></select> lines)</span></h2>
+  <pre id="log-out">Loading...</pre>
+</section>
+
+</div>
+
+<script>
+const CFG_FIELDS = [
+  {key:'context',  label:'Context',        type:'number', step:1024},
+  {key:'temp',     label:'Temperature',    type:'number', step:0.05},
+  {key:'top_k',    label:'Top-K',          type:'number', step:1},
+  {key:'top_p',    label:'Top-P',          type:'number', step:0.05},
+  {key:'min_p',    label:'Min-P',          type:'number', step:0.01},
+  {key:'repeat_penalty', label:'Repeat penalty', type:'number', step:0.05},
+  {key:'np',       label:'Parallel slots', type:'number', step:1},
+  {key:'batch_size',label:'Batch size',    type:'number', step:512},
+];
+
+let currentCfg = {};
+let switchTarget = null;
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+function msg(id, text, type='info') {
+  const el = document.getElementById(id);
+  el.textContent = text; el.className = 'msg ' + type; el.style.display = '';
+  if (type === 'ok') setTimeout(() => el.style.display='none', 4000);
+}
+function fmtSize(b) {
+  if (!b) return '—';
+  return b > 1e9 ? (b/1e9).toFixed(1)+' GB' : (b/1e6).toFixed(0)+' MB';
+}
+function fmtPct(d, t) {
+  return t ? Math.min(100, Math.round(d/t*100)) : 0;
+}
+
+// ── status ───────────────────────────────────────────────────────────────────
+async function fetchStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    currentCfg = d.config || {};
+    const v = d.vram || {};
+    const ok = d.health?.status === 'ok';
+    const dot = document.getElementById('health-dot');
+    dot.className = ok ? 'ok' : 'err';
+    const pct = v.total ? Math.round(v.used_mib/v.total_mib*100) : 0;
+    const model = d.active_model ? d.active_model.split('/').pop() : '—';
+    document.getElementById('status-card').innerHTML = `
+      <div class="row">
+        <div class="kv"><span>Active model</span><span>${model}</span></div>
+        <div class="kv"><span>Server</span><span class="${ok?'active-badge':''}">
+          ${ok ? '● healthy' : '○ unreachable'}</span></div>
+        <div class="kv"><span>Context</span><span>${(currentCfg.context||0).toLocaleString()} tokens</span></div>
+        <div class="kv"><span>Temperature</span><span>${currentCfg.temp ?? '—'}</span></div>
+        <div class="kv" style="min-width:180px">
+          <span>VRAM  ${v.used_mib||0} / ${v.total_mib||0} MiB (${pct}%)</span>
+          <div class="vram-bar"><div class="vram-bar-fill" style="width:${pct}%"></div></div>
+        </div>
+      </div>`;
+    buildCfgGrid('cfg-grid', currentCfg, false);
+    document.getElementById('refresh-ts').textContent = 'updated '+new Date().toLocaleTimeString();
+  } catch(e) {
+    document.getElementById('health-dot').className = 'err';
+  }
+}
+
+// ── config grid ──────────────────────────────────────────────────────────────
+function buildCfgGrid(gridId, cfg, forSwitch) {
+  const grid = document.getElementById(gridId);
+  if (!grid) return;
+  grid.innerHTML = CFG_FIELDS.map(f => `
+    <div class="form-group">
+      <label>${f.label}</label>
+      <input type="${f.type}" step="${f.step}"
+             id="${forSwitch?'sw-':'cfg-'}${f.key}"
+             value="${cfg[f.key] ?? ''}">
+    </div>`).join('');
+}
+function readCfgGrid(prefix) {
+  const out = {};
+  CFG_FIELDS.forEach(f => {
+    const el = document.getElementById(prefix+f.key);
+    if (el && el.value !== '') out[f.key] = f.type==='number' ? Number(el.value) : el.value;
+  });
+  return out;
+}
+
+// ── models ───────────────────────────────────────────────────────────────────
+async function fetchModels() {
+  try {
+    const r = await fetch('/api/models');
+    const models = await r.json();
+    const tbody = document.getElementById('models-body');
+    if (!models.length) {
+      tbody.innerHTML = '<tr><td colspan="4" style="color:#555">No models in /models</td></tr>';
+      return;
+    }
+    tbody.innerHTML = models.map(m => `
+      <tr>
+        <td>${m.filename}</td>
+        <td style="color:#888">${m.size_gb} GB</td>
+        <td>${m.active ? '<span class="active-badge">● active</span>' : ''}</td>
+        <td style="text-align:right">
+          ${!m.active ? `<button onclick="openSwitch('${m.filename}')">Switch to this</button> ` : ''}
+          ${!m.active ? `<button class="danger" onclick="deleteModel('${m.filename}')">Delete</button>` : ''}
+        </td>
+      </tr>`).join('');
+  } catch(e) {}
+}
+
+function openSwitch(filename) {
+  switchTarget = filename;
+  document.getElementById('switch-section').style.display = '';
+  document.getElementById('switch-section').scrollIntoView({behavior:'smooth',block:'center'});
+  buildCfgGrid('switch-cfg-grid', currentCfg, true);
+  document.getElementById('switch-msg').style.display = 'none';
+}
+
+async function doSwitch() {
+  if (!switchTarget) return;
+  const body = {filename: switchTarget, ...readCfgGrid('sw-')};
+  const btn = event.target; btn.disabled = true;
+  try {
+    const r = await fetch('/api/switch', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d = await r.json();
+    if (r.ok) {
+      msg('switch-msg', 'Switching to '+switchTarget+' — server restarting…', 'ok');
+      document.getElementById('switch-section').style.display = 'none';
+      switchTarget = null;
+    } else {
+      msg('switch-msg', d.error || 'Error', 'err');
+    }
+  } catch(e) { msg('switch-msg', e.message, 'err'); }
+  btn.disabled = false;
+}
+
+async function deleteModel(filename) {
+  if (!confirm('Delete '+filename+'?')) return;
+  const r = await fetch('/api/models/'+encodeURIComponent(filename), {method:'DELETE'});
+  const d = await r.json();
+  msg('models-msg', d.message || d.error, r.ok ? 'ok' : 'err');
+  fetchModels();
+}
+
+// ── download ─────────────────────────────────────────────────────────────────
+async function startDownload() {
+  const repo = document.getElementById('dl-repo').value.trim();
+  const file = document.getElementById('dl-file').value.trim();
+  const token = document.getElementById('dl-token').value.trim();
+  if (!repo || !file) { msg('dl-msg','repo ID and filename are required','err'); return; }
+  const body = {repo_id:repo, filename:file};
+  if (token) body.token = token;
+  const btn = event.target; btn.disabled = true;
+  try {
+    const r = await fetch('/api/download', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d = await r.json();
+    if (r.ok) {
+      msg('dl-msg','Download started: '+file+' (id: '+d.id+')','ok');
+      document.getElementById('dl-file').value = '';
+    } else {
+      msg('dl-msg', d.error || 'Error', 'err');
+    }
+  } catch(e) { msg('dl-msg', e.message, 'err'); }
+  btn.disabled = false;
+}
+
+async function cancelDownload(id) {
+  await fetch('/api/downloads/'+id, {method:'DELETE'});
+  fetchDownloads();
+}
+
+async function fetchDownloads() {
+  try {
+    const r = await fetch('/api/downloads');
+    const list = await r.json();
+    const empty = document.getElementById('downloads-empty');
+    const tbl = document.getElementById('downloads-table');
+    if (!list.length) { empty.style.display=''; tbl.style.display='none'; return; }
+    empty.style.display='none'; tbl.style.display='';
+    document.getElementById('downloads-body').innerHTML = list.map(d => {
+      const pct = d.progress_pct ?? 0;
+      const statusColor = d.status==='done'?'#4caf50':d.status==='error'?'#f44336':d.status==='cancelled'?'#888':'#90caf9';
+      return `<tr>
+        <td>${d.filename}</td>
+        <td style="color:#666">${d.repo_id}</td>
+        <td style="min-width:120px">
+          ${fmtSize(d.downloaded)} / ${fmtSize(d.total)}
+          <div class="prog-bar"><div class="prog-bar-fill" style="width:${pct}%"></div></div>
+        </td>
+        <td><span style="color:${statusColor}">${d.status} ${d.status==='downloading'?pct+'%':''}</span>
+            ${d.error?`<br><span style="color:#888;font-size:10px">${d.error}</span>`:''}
+        </td>
+        <td>${d.status==='downloading'?`<button class="danger" onclick="cancelDownload('${d.id}')">Cancel</button>`:''}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {}
+}
+
+// ── server restart ────────────────────────────────────────────────────────────
+async function restartServer() {
+  const body = readCfgGrid('cfg-');
+  const btn = event.target; btn.disabled = true;
+  try {
+    const r = await fetch('/api/server/restart', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d = await r.json();
+    msg('cfg-msg', r.ok ? 'Restarting server…' : (d.error||'Error'), r.ok?'ok':'err');
+  } catch(e) { msg('cfg-msg', e.message, 'err'); }
+  btn.disabled = false;
+}
+
+// ── token ─────────────────────────────────────────────────────────────────────
+async function fetchToken() {
+  const r = await fetch('/api/token');
+  const d = await r.json();
+  document.getElementById('token-label').textContent = d.token_set ? 'Saved token: ●●●●●●●● (set)' : 'No token saved';
+}
+async function saveToken() {
+  const token = document.getElementById('token-input').value.trim();
+  if (!token) { msg('token-msg','Enter a token','err'); return; }
+  const r = await fetch('/api/token', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});
+  const d = await r.json();
+  msg('token-msg', d.message||d.error, r.ok?'ok':'err');
+  document.getElementById('token-input').value = '';
+  fetchToken();
+}
+async function deleteToken() {
+  const r = await fetch('/api/token', {method:'DELETE'});
+  const d = await r.json();
+  msg('token-msg', d.message||d.error, r.ok?'ok':'err');
+  fetchToken();
+}
+
+// ── logs ──────────────────────────────────────────────────────────────────────
+async function fetchLogs() {
+  const n = document.getElementById('log-lines').value;
+  try {
+    const r = await fetch('/api/server/logs?lines='+n);
+    const d = await r.json();
+    const pre = document.getElementById('log-out');
+    pre.textContent = d.lines?.join('\n') || '(empty)';
+    pre.scrollTop = pre.scrollHeight;
+  } catch(e) {}
+}
+
+// ── polling ───────────────────────────────────────────────────────────────────
+async function refresh() {
+  await Promise.all([fetchStatus(), fetchModels(), fetchDownloads(), fetchToken(), fetchLogs()]);
+}
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>"""
+
+
 @app.get("/")
+def ui():
+    return render_template_string(UI_HTML)
+
+
+@app.get("/api")
 def index():
     cfg = load_config()
     return jsonify({
