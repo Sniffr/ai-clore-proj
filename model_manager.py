@@ -183,13 +183,16 @@ def index():
         "endpoints": [
             "GET  /api/models",
             "GET  /api/status",
-            "POST /api/download  {repo_id, filename, token?}",
+            "POST /api/download         {repo_id, filename, token?}",
             "GET  /api/downloads",
             "GET  /api/downloads/<id>",
             "DELETE /api/downloads/<id>",
-            "POST /api/switch   {filename, context?, temp?, top_k?, top_p?, min_p?, repeat_penalty?, np?, batch_size?}",
-            "POST /api/token    {token}",
+            "POST /api/switch           {filename, context?, temp?, top_k?, top_p?, min_p?, repeat_penalty?, np?, batch_size?}",
+            "POST /api/server/restart   {context?, temp?, top_k?, top_p?, min_p?, repeat_penalty?, np?, batch_size?}",
+            "GET  /api/server/logs      ?lines=50",
+            "POST /api/token            {token}",
             "GET  /api/token",
+            "DELETE /api/token",
             "DELETE /api/models/<filename>",
         ]
     })
@@ -332,7 +335,6 @@ def switch_model():
     cfg = load_config()
     cfg["model"] = str(dest)
 
-    # allow overriding server params at switch time
     for key in ("context", "temp", "top_k", "top_p", "min_p", "repeat_penalty", "np", "batch_size"):
         if key in body:
             cfg[key] = body[key]
@@ -343,6 +345,39 @@ def switch_model():
     t.start()
 
     return jsonify({"message": f"Switching to {filename}", "config": cfg})
+
+
+@app.post("/api/server/restart")
+def server_restart():
+    """Restart llama-server with updated args, keeping the current model."""
+    body = request.get_json(force=True) or {}
+    cfg = load_config()
+
+    for key in ("context", "temp", "top_k", "top_p", "min_p", "repeat_penalty", "np", "batch_size"):
+        if key in body:
+            cfg[key] = body[key]
+
+    if not cfg.get("model"):
+        return jsonify({"error": "no model configured — use /api/switch first"}), 400
+
+    save_config(cfg)
+
+    t = threading.Thread(target=restart_llama, args=(cfg,), daemon=True)
+    t.start()
+
+    return jsonify({"message": "Restarting llama-server with new args", "config": cfg})
+
+
+@app.get("/api/server/logs")
+def server_logs():
+    """Tail the llama-server log."""
+    n = int(request.args.get("lines", 50))
+    try:
+        result = subprocess.run(["tail", f"-{n}", "/var/log/llama-server.log"],
+                                capture_output=True, text=True)
+        return jsonify({"lines": result.stdout.splitlines()})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.post("/api/token")
