@@ -33,4 +33,4 @@ RUN mkdir -p /models
 
 COPY model_manager.py /app/model_manager.py
 
-EXPOSE 5000dockerfile
+EXPOSE 5000
