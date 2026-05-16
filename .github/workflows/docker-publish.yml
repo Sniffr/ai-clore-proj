@@ -11,9 +11,12 @@ env:
 
 jobs:
   # ────────────────────────────────────────────────────────────────
-  # NEW: Build llama.cpp server-cuda from upstream with CUDA 12.4
+  # Build llama.cpp server-cuda from upstream with CUDA 12.4
   # Uses the official cuda.Dockerfile with --build-arg overrides.
   # Runs on any host with NVIDIA driver ≥ 525 / CUDA ≥ 12.4.
+  #
+  # KEY FIX: NVIDIA only published CUDA 12.4 images for Ubuntu 22.04,
+  # not 24.04, so we must set UBUNTU_VERSION=22.04 alongside CUDA_VERSION.
   # ────────────────────────────────────────────────────────────────
   build-cuda-12-4:
     name: Build server-cuda (CUDA 12.4)
@@ -49,6 +52,7 @@ jobs:
           target: server
           build-args: |
             CUDA_VERSION=12.4.0
+            UBUNTU_VERSION=22.04
             CUDA_DOCKER_ARCH=all
           push: true
           tags: |
