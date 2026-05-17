@@ -5,7 +5,7 @@ mkdir -p /models /var/log
 REPO="cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit"
 SERVED_NAME="qwen3.6-35b"
 
-export HF_TOKEN="hf_your_token_here"
+export HF_TOKEN="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"
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export HF_HOME=/models
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
