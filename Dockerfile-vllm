@@ -7,7 +7,11 @@ FROM vllm/vllm-openai:latest
 ENTRYPOINT []
 
 # Python deps for the manager UI + HF downloader.
-RUN pip install --no-cache-dir flask "huggingface_hub[hf_transfer]"
+# --ignore-installed blinker: vllm base ships blinker 1.4 as a distutils
+# package that pip can't uninstall cleanly; Flask 3 requires blinker>=1.9.
+# huggingface_hub is already in the base image; hf_transfer is a separate
+# package in hf-hub 1.x (no longer an extras tag).
+RUN pip install --no-cache-dir --ignore-installed blinker flask hf_transfer
 
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
 ENV HF_HOME=/models
