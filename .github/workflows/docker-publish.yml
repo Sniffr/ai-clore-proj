@@ -10,67 +10,6 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  # ────────────────────────────────────────────────────────────────
-  # Build llama.cpp server-cuda from upstream with CUDA 12.4
-  #
-  # The upstream cuda.Dockerfile on master targets Ubuntu 24.04 and
-  # installs gcc-14/g++-14. NVIDIA never published CUDA 12.4 images
-  # for Ubuntu 24.04, so we must use Ubuntu 22.04 — but that only
-  # ships gcc-11/gcc-12, not gcc-14.
-  #
-  # Fix: after cloning, sed-patch the Dockerfile to swap gcc-14/g++-14
-  # for the distro-default gcc/g++ before building.
-  # ────────────────────────────────────────────────────────────────
-  build-cuda-12-4:
-    name: Build server-cuda (CUDA 12.4)
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-
-    steps:
-      - name: Free up disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
-          sudo docker image prune -af
-          df -h
-
-      - name: Clone llama.cpp and patch Dockerfile for CUDA 12.4 + Ubuntu 22.04
-        run: |
-          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
-          echo "LLAMA_SHA=$(git -C llama.cpp rev-parse --short HEAD)" >> "$GITHUB_ENV"
-
-          # Replace gcc-14 / g++-14 with gcc / g++ so it works on Ubuntu 22.04
-          sed -i 's/gcc-14/gcc/g; s/g++-14/g++/g' llama.cpp/.devops/cuda.Dockerfile
-
-          echo "--- Patched Dockerfile (build stage) ---"
-          head -30 llama.cpp/.devops/cuda.Dockerfile
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push server-cuda (CUDA 12.4)
-        uses: docker/build-push-action@v6
-        with:
-          context: ./llama.cpp
-          file: ./llama.cpp/.devops/cuda.Dockerfile
-          target: server
-          build-args: |
-            CUDA_VERSION=12.4.1
-            UBUNTU_VERSION=22.04
-            CUDA_DOCKER_ARCH=all
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/llama.cpp:server-cuda-12-4
-            ${{ secrets.DOCKERHUB_USERNAME }}/llama.cpp:server-cuda-12-4-${{ env.LLAMA_SHA }}
-
-  # ────────────────────────────────────────────────────────────────
-  # Existing jobs (unchanged)
-  # ────────────────────────────────────────────────────────────────
 
   # Fast build (~5 min): pre-built llama.cpp binary pinned to b8672 (CUDA 12.4 compatible)
   build-cpp:
@@ -105,40 +44,6 @@ jobs:
           push: true
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/llama.cpp:server-cuda
-  # Slow build (~90 min): compiled from source against CUDA 12.4 — runs on any driver 550+
-  build-universal:
-    name: Build universal image (from source)
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Free up disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
-          sudo docker image prune -af
-          df -h
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push universal
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/llama.cpp:server-cuda-universal
-
   # ────────────────────────────────────────────────────────────────
   # vLLM image — wraps the official vllm/vllm-openai base with the
   # Flask model manager + Clore startup scripts. Tagged :vllm.
