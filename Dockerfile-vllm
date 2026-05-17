@@ -1,0 +1,21 @@
+# vLLM container — mirrors the llama.cpp Dockerfile but uses vLLM's OpenAI-compatible
+# server instead of llama-server. Uses the official vllm-openai image as base.
+FROM vllm/vllm-openai:latest
+
+# Override entrypoint (the base image auto-starts vllm serve; we want model_manager
+# to control launch instead).
+ENTRYPOINT []
+
+# Python deps for the manager UI + HF downloader.
+RUN pip install --no-cache-dir flask "huggingface_hub[hf_transfer]"
+
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
+ENV HF_HOME=/models
+ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+RUN mkdir -p /models /app /var/log
+
+COPY model_manager_vllm.py /app/model_manager_vllm.py
+
+# 5000 = manager UI, 8000 = primary vLLM, 8001+ = extras
+EXPOSE 5000 8000 8001 8002
