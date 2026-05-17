@@ -24,7 +24,7 @@ cat > /root/vllm_config.json << EOF
 {
   "repo_id": "$REPO",
   "served_model_name": "$SERVED_NAME",
-  "max_model_len": 65536,
+  "max_model_len": 262144,
   "max_num_batched_tokens": 8192,
   "max_num_seqs": 4,
   "gpu_memory_utilization": 0.94,
@@ -49,7 +49,8 @@ python3 /app/model_manager_vllm.py >> /var/log/model-manager.log 2>&1 &
 
 # Dual GPU via tensor parallelism. Each GPU holds half the weights.
 # --tensor-parallel-size 2: required for multi-GPU.
-# --max-model-len 65536: more KV slots available across two cards.
+# --max-model-len 262144: 256K context — Qwen3.6's native trained ceiling.
+#   KV cache shards across both GPUs, so per-GPU footprint stays modest.
 # --max-num-seqs 4: handle more concurrent users.
 # vLLM TP works for MoE — unlike llama.cpp which falls back to pipeline parallel.
 vllm serve cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit \
@@ -57,7 +58,7 @@ vllm serve cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit \
   --host 0.0.0.0 \
   --port 8000 \
   --tensor-parallel-size 2 \
-  --max-model-len 65536 \
+  --max-model-len 262144 \
   --max-num-batched-tokens 8192 \
   --max-num-seqs 4 \
   --gpu-memory-utilization 0.94 \

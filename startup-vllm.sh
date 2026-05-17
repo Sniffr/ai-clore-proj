@@ -25,10 +25,10 @@ cat > /root/vllm_config.json << EOF
 {
   "repo_id": "$REPO",
   "served_model_name": "$SERVED_NAME",
-  "max_model_len": 20480,
+  "max_model_len": 131072,
   "max_num_batched_tokens": 4096,
   "max_num_seqs": 2,
-  "gpu_memory_utilization": 0.92,
+  "gpu_memory_utilization": 0.94,
   "kv_cache_dtype": "fp8",
   "cpu_offload_gb": 0,
   "enable_prefix_caching": true,
@@ -47,10 +47,10 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # Model manager on port 5000
 python3 /app/model_manager_vllm.py >> /var/log/model-manager.log 2>&1 &
 
-# Single GPU — AWQ 4-bit Qwen3.6-35B fits in ~22 GB.
-# --max-model-len 20480: matches vllms.txt reference; bump to 65536+ on 32 GB cards.
+# Single GPU — AWQ 4-bit Qwen3.6-35B fits in ~20 GB, ~10 GB left for KV cache.
+# --max-model-len 131072: 128K context. Qwen3.6 hybrid Mamba keeps KV tiny (~700 MiB/seq at fp8).
 # --max-num-seqs 2: cap concurrent requests (controls KV cache slots).
-# --gpu-memory-utilization 0.92: leave 8% headroom for activations.
+# --gpu-memory-utilization 0.94: 32 GB Ada has enough headroom for tight util.
 # --kv-cache-dtype fp8: halves KV memory at <1% quality cost.
 # --enable-prefix-caching: dramatically speeds up shared-prefix prompts.
 CUDA_VISIBLE_DEVICES=0 vllm serve cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit \
@@ -58,10 +58,10 @@ CUDA_VISIBLE_DEVICES=0 vllm serve cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit \
   --host 0.0.0.0 \
   --port 8000 \
   --tensor-parallel-size 1 \
-  --max-model-len 20480 \
+  --max-model-len 131072 \
   --max-num-batched-tokens 4096 \
   --max-num-seqs 2 \
-  --gpu-memory-utilization 0.92 \
+  --gpu-memory-utilization 0.94 \
   --kv-cache-dtype fp8 \
   --enable-prefix-caching \
   --reasoning-parser qwen3 \
