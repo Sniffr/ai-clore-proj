@@ -105,8 +105,6 @@ jobs:
           push: true
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/llama.cpp:server-cuda
-            ${{ secrets.DOCKERHUB_USERNAME }}/llama.cpp:server-cuda-latest
-
   # Slow build (~90 min): compiled from source against CUDA 12.4 — runs on any driver 550+
   build-universal:
     name: Build universal image (from source)
@@ -140,4 +138,3 @@ jobs:
           push: true
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/llama.cpp:server-cuda-universal
-            ${{ secrets.DOCKERHUB_USERNAME }}/llama.cpp:server-cuda-universal-latest
