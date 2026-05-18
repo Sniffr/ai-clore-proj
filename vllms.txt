@@ -1,20 +1,37 @@
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+./build/bin/llama-server \
+  -m /models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
+  --host 0.0.0.0 \
+  --port 8000 \
+  -fit on \
+  -fa auto \
+  -c 126096 \
+  -np 1 \
+  --cache-type-k q4_0 \
+  --cache-type-v q4_0 \
+  --no-mmap \
+  --jinja \
+  -b 2048 \
+  --temp 0.6 \
+  --top-k 20 \
+  --top-p 0.95 \
+  --min-p 0.05 \
+  --repeat-penalty 1.05
 
-sudo nohup vllm serve cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit \
-  --served-model-name qwen3.6-35b \
-  --max-model-len 20480 \
-  --max-num-batched-tokens 4096 \
-  --gpu-memory-utilization 0.96 \
-  --kv-cache-dtype fp8 \
-  --max-num-seqs 2 \
-  --cpu-offload-gb 3 \
-  --enable-prefix-caching \
-  --reasoning-parser qwen3 \
-  --enable-auto-tool-choice \
-  --tool-call-parser qwen3_coder \
-  --limit-mm-per-prompt '{"image":0,"video":0}' \
-  --trust-remote-code \
-  --host 0.0.0.0 --port 80 > vllm.log 2>&1
-
-
-vllm bench serve   --backend openai-chat   --base-url http://localhost:8000   --endpoint /v1/chat/completions   --model qwen3.6-35b   --tokenizer cyankiwi/Qwen3.6-35B-A3B-AWQ-4bit   --dataset-name random   --random-input-len 1024   --random-output-len 512   --num-prompts 20   --max-concurrency 2
+nohup ./build/bin/llama-server \
+  -m /models/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
+  --host 0.0.0.0 \
+  --port 8000 \
+  -fit on \
+  -fa on \
+  -c 126032 \
+  -np 1 \
+  --cache-type-k q4_0 \
+  --cache-type-v q4_0 \
+  --no-mmap \
+  --jinja \
+  -b 2048 \
+  --temp 0.6 \
+  --top-k 20 \
+  --top-p 0.95 \
+  --min-p 0.05 \
+  --repeat-penalty 1.05 > llama.log 2>&1 &
