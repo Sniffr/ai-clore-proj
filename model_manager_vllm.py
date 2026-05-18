@@ -493,6 +493,33 @@ def build_vllm_args(cfg, port=PRIMARY_PORT, gpus=None, tp=None):
         env["CUDA_VISIBLE_DEVICES"] = ",".join(str(g) for g in gpus)
     return args, env
 
+def vllm_runtime_values(cfg, port=PRIMARY_PORT, gpus=None, tp=None):
+    tp = tp or cfg.get("tensor_parallel_size", 1)
+    values = {
+        "CUDA_VISIBLE_DEVICES": ",".join(str(g) for g in gpus) if gpus else "all",
+        "repo_id": cfg.get("repo_id"),
+        "--host": "0.0.0.0",
+        "--port": port,
+        "--tensor-parallel-size": tp,
+        "--max-model-len": cfg.get("max_model_len", 20480),
+        "--max-num-batched-tokens": cfg.get("max_num_batched_tokens", 4096),
+        "--max-num-seqs": cfg.get("max_num_seqs", 2),
+        "--gpu-memory-utilization": cfg.get("gpu_memory_utilization", 0.92),
+        "--kv-cache-dtype": cfg.get("kv_cache_dtype", "fp8"),
+        "--enable-prefix-caching": bool(cfg.get("enable_prefix_caching")),
+        "--enable-auto-tool-choice": bool(cfg.get("enable_auto_tool_choice")),
+        "--limit-mm-per-prompt": '{"image":0,"video":0}',
+        "--trust-remote-code": True,
+        "--cpu-offload-gb": cfg.get("cpu_offload_gb", 0),
+    }
+    if cfg.get("served_model_name"):
+        values["--served-model-name"] = cfg["served_model_name"]
+    if cfg.get("reasoning_parser"):
+        values["--reasoning-parser"] = cfg["reasoning_parser"]
+    if cfg.get("tool_call_parser"):
+        values["--tool-call-parser"] = cfg["tool_call_parser"]
+    return values
+
 def write_onstart(cfg, gpus=None, tp=None):
     if not cfg.get("repo_id"):
         return
@@ -710,8 +737,13 @@ def server_status():
         }
 
     cfg = load_config()
+    runtime = {
+        "backend": "vLLM",
+        "values": vllm_runtime_values(cfg, port=state.get("port", PRIMARY_PORT),
+                                      gpus=state.get("gpus"), tp=state.get("tp")),
+    }
     return jsonify({"health": health, "server_state": state, "config": cfg,
-                    "vram": vram, "extras": extras})
+                    "vram": vram, "extras": extras, "runtime": runtime})
 
 
 @app.get("/api/server/state")
@@ -1170,6 +1202,7 @@ let pendingSwitchRepo = null;
 
 function fmtGB(b){ return (b/1e9).toFixed(2)+' GB'; }
 function fmtMiB(m){ return m.toLocaleString()+' MiB'; }
+function fmtVal(v){ return v === true ? 'true' : v === false ? 'false' : v; }
 function el(html){ const t=document.createElement('template'); t.innerHTML=html.trim(); return t.content.firstChild; }
 
 async function api(path, opts={}){
@@ -1178,13 +1211,22 @@ async function api(path, opts={}){
   return r.json();
 }
 
-function renderPrimary(state, cfg, health){
+function renderPrimary(state, cfg, health, runtime){
   const s = state.status || 'unknown';
   const statusEl = document.getElementById('hdr-state');
   statusEl.className = 'status-'+s;
   statusEl.textContent = s.toUpperCase();
   const gpus = state.gpus ? state.gpus.join(',') : '—';
   const tp = state.tp || cfg.tensor_parallel_size || 1;
+  const rt = runtime || {};
+  const rtValues = rt.values || {};
+  const rtLines = Object.entries(rtValues)
+    .filter(([_, v]) => v !== null && v !== undefined && v !== '')
+    .map(([k, v]) => `${k}: ${fmtVal(v)}`).join('\n');
+  const rtLabel = rt.backend ? `${rt.backend} values` : 'runtime values';
+  const rtDetails = rtLines ? `<details style="margin-top:8px"><summary>${rtLabel}</summary>
+    <pre style="font-size:11px;color:#9bd;background:#0d0d0d;border:1px solid #1e1e1e;border-radius:4px;padding:8px;white-space:pre-wrap;word-break:break-all;max-height:220px;overflow:auto">${rtLines}</pre>
+  </details>` : '';
   document.getElementById('primary-card').innerHTML = `
     <div class="row">
       <div class="kv"><label>Repo</label><span>${state.repo_id || '—'}</span></div>
@@ -1197,6 +1239,7 @@ function renderPrimary(state, cfg, health){
       <div class="kv"><label>Health</label><span class="status-${health.status==='ok'?'running':'error'}">${health.status}</span></div>
     </div>
     ${state.message ? `<div class="muted" style="margin-top:8px">${state.message}</div>` : ''}
+    ${rtDetails}
     <div style="margin-top:10px"><button onclick="restart()">Restart</button></div>
   `;
 }
@@ -1433,7 +1476,7 @@ async function loadLogs(){
 async function refresh(){
   try {
     const s = await api('/api/status');
-    renderPrimary(s.server_state, s.config, s.health);
+    renderPrimary(s.server_state, s.config, s.health, s.runtime);
     renderGPUs(s.vram);
     renderServers(s.extras);
     fastPoll = ['loading','stopping','clearing_vram'].includes(s.server_state.status);

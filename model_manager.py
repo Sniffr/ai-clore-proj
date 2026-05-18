@@ -346,6 +346,28 @@ def build_llama_args(cfg, port=8080, gpu=None):
         env["CUDA_VISIBLE_DEVICES"] = str(gpu)
     return args, env
 
+def llama_cpp_values(cfg, port=8080, gpu=None):
+    return {
+        "CUDA_VISIBLE_DEVICES": str(gpu) if gpu is not None else "all",
+        "-m": cfg.get("model"),
+        "--host": "0.0.0.0",
+        "--port": port,
+        "-ngl": 999,
+        "-fa": "on",
+        "-c": cfg.get("context"),
+        "-np": cfg.get("np"),
+        "--cache-type-k": "q8_0",
+        "--cache-type-v": "q8_0",
+        "--no-mmap": True,
+        "--jinja": True,
+        "-b": cfg.get("batch_size"),
+        "--temp": cfg.get("temp"),
+        "--top-k": cfg.get("top_k"),
+        "--top-p": cfg.get("top_p"),
+        "--min-p": cfg.get("min_p"),
+        "--repeat-penalty": cfg.get("repeat_penalty"),
+    }
+
 def write_onstart(cfg, gpu=None):
     if not cfg.get("model"):
         return
@@ -550,7 +572,12 @@ def server_status():
         }
 
     cfg = load_config()
-    return jsonify({"health": health, "server_state": state, "config": cfg, "vram": vram})
+    runtime = {
+        "backend": "llama.cpp",
+        "values": llama_cpp_values(cfg, port=state.get("port", 8080), gpu=state.get("gpu")),
+    }
+    return jsonify({"health": health, "server_state": state, "config": cfg,
+                    "vram": vram, "runtime": runtime})
 
 
 @app.get("/api/server/state")
@@ -1144,6 +1171,7 @@ function msg(id, text, type='info') {
 }
 function fmtSize(b){ return b>1e9?(b/1e9).toFixed(1)+' GB':b>1e6?(b/1e6).toFixed(0)+' MB':'0'; }
 function fmtMib(m){ return m>=1024?(m/1024).toFixed(1)+' GB':m+' MiB'; }
+function fmtVal(v){ return v === true ? 'true' : v === false ? 'false' : v; }
 function stateBadge(s, msgStr) {
   const labels = {running:'running',loading:'loading...',
     stopping:'stopping...',clearing_vram:'freeing VRAM...',error:'error',unknown:'unknown'};
@@ -1160,6 +1188,15 @@ async function fetchStatus() {
     const ss = d.server_state || {};
     const st = ss.status || 'unknown';
     const v = d.vram || {};
+    const runtime = d.runtime || {};
+    const runtimeValues = runtime.values || {};
+    const runtimeLines = Object.entries(runtimeValues)
+      .filter(([_, v]) => v !== null && v !== undefined && v !== '')
+      .map(([k, v]) => `${k}: ${fmtVal(v)}`).join('\n');
+    const runtimeLabel = runtime.backend ? `${runtime.backend} values` : 'runtime values';
+    const runtimeDetails = runtimeLines
+      ? `<details style="margin-top:8px"><summary>${runtimeLabel}</summary><pre>${runtimeLines}</pre></details>`
+      : '';
 
     const hdr = document.getElementById('hdr-state');
     hdr.textContent = {running:'running',loading:'loading...',
@@ -1188,7 +1225,8 @@ async function fetchStatus() {
         <div class="kv"><label>Context</label><span>${(currentCfg.context||0).toLocaleString()} tok</span></div>
         <div class="kv"><label>Temperature</label><span>${currentCfg.temp ?? '—'}</span></div>
         ${gpuRows}
-      </div>`;
+      </div>
+      ${runtimeDetails}`;
 
     buildCfgGrid('cfg-grid', currentCfg, 'cfg-');
     document.getElementById('refresh-ts').textContent = new Date().toLocaleTimeString();
