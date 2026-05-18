@@ -88,7 +88,7 @@ jobs:
 
   # Fast build (~5 min): pre-built llama.cpp binary pinned to b8672 (CUDA 12.4 compatible)
   build-cpp-no:
-    name: Build server-cuda image
+    name: Build image no Model
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -118,4 +118,4 @@ jobs:
           file: Dockerfile-cpp-no-model
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/llama.cpp:no-model
+            ${{ secrets.DOCKERHUB_USERNAME }}/llama.cpp:model
